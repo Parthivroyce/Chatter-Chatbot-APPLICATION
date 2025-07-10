@@ -7,12 +7,12 @@ import nltk
 from nltk.stem.lancaster import LancasterStemmer
 import tflearn
 import tensorflow as tf
+import wikipedia
+from duckduckgo_search import DDGS
 
 # Initialize app and stemmer
 app = Flask(__name__)
 stemmer = LancasterStemmer()
-
-# Download NLTK tokenizer
 nltk.download('punkt')
 
 # Load intents and training data
@@ -33,7 +33,7 @@ net = tflearn.regression(net)
 model = tflearn.DNN(net)
 model.load("model.tflearn")
 
-# Preprocess and predict
+# Preprocess user sentence
 def clean_up_sentence(sentence):
     sentence_words = nltk.word_tokenize(sentence)
     sentence_words = [stemmer.stem(word.lower()) for word in sentence_words]
@@ -48,26 +48,42 @@ def bow(sentence, words):
                 bag[i] = 1
     return np.array(bag)
 
+# Classify intent
 ERROR_THRESHOLD = 0.25
-
 def classify(sentence):
     results = model.predict([bow(sentence, words)])[0]
     results = [[i, r] for i, r in enumerate(results) if r > ERROR_THRESHOLD]
     results.sort(key=lambda x: x[1], reverse=True)
     return [(classes[r[0]], r[1]) for r in results]
 
+# Fallback: search web
+def fallback_web_answer(query):
+    try:
+        # Try DuckDuckGo first
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=3):
+                if r.get("body"):
+                    return r["body"]
+        # Fallback to Wikipedia
+        return wikipedia.summary(query, sentences=2)
+    except Exception:
+        return "I'm not sure how to answer that yet. Try rephrasing!"
+
+# Get chatbot response
 def get_response(sentence):
     results = classify(sentence)
-    if results:
+    if results and results[0][1] >= 0.5:
+        tag = results[0][0]
         for intent in intents["intents"]:
-            if intent["tag"] == results[0][0]:
+            if intent["tag"] == tag:
                 return random.choice(intent["responses"])
-    return "I'm not sure I understand. Can you rephrase?"
+    else:
+        return fallback_web_answer(sentence)
 
-# Define routes
+# API routes
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Chatbot API is running!"
+    return "✅ Chatbot API (with Web Search) is running!"
 
 @app.route("/chat", methods=["POST"])
 def chat():
